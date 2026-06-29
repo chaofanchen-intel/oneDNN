@@ -21,6 +21,8 @@
 #include "common/stream.hpp"
 #include "common/utils.hpp"
 
+#include "gpu/intel/utils.hpp"
+
 namespace dnnl {
 namespace impl {
 namespace xpu {
@@ -60,20 +62,28 @@ status_t usm_memory_storage_t::map_data(
             = *utils::downcast<xpu::sycl::stream_impl_t *>(stream->impl())
                        ->queue();
 
-    void *host_ptr = ::sycl::malloc_host(size, sycl_queue.get_context());
+    const bool use_usm_host
+            = gpu::intel::gpu_utils::use_usm_host_for_memory_map(engine());
+    void *host_ptr = use_usm_host
+            ? ::sycl::malloc_host(size, sycl_queue.get_context())
+            : impl::malloc(size, 64);
     if (!host_ptr) return status::out_of_memory;
 
     sycl_queue.wait_and_throw();
     sycl_queue.memcpy(host_ptr, usm_ptr, size).wait();
 
     *mapped_ptr = host_ptr;
-    auto unmap_callback = [usm_ptr, size](stream_t *stream, void *mapped_ptr) {
+    auto unmap_callback = [usm_ptr, size, use_usm_host](
+                                  stream_t *stream, void *mapped_ptr) {
         ::sycl::queue sycl_queue
                 = *utils::downcast<xpu::sycl::stream_impl_t *>(stream->impl())
                            ->queue();
         sycl_queue.wait_and_throw();
         sycl_queue.memcpy(usm_ptr, mapped_ptr, size).wait();
-        ::sycl::free(mapped_ptr, sycl_queue.get_context());
+        if (use_usm_host)
+            ::sycl::free(mapped_ptr, sycl_queue.get_context());
+        else
+            impl::free(mapped_ptr);
         return status::success;
     };
 
