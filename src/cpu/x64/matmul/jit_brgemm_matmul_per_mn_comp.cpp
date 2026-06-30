@@ -539,10 +539,13 @@ private:
         jmp(k_bulk, T_NEAR);
         L(k_bulk_done);
 
+        const bool scalar_tail = !(has_vnni_ && isa_has_masks(isa_));
+        if (scalar_tail) xor_(reg_iter, reg_iter);
+
         Label k_tail_done;
         test(reg_k_iter, reg_k_iter);
         jz(k_tail_done, T_NEAR);
-        if (has_vnni_ && isa_has_masks(isa_)) {
+        if (!scalar_tail) {
             push(reg_tmp);
             build_low_bits_mask(reg_k_iter);
             pop(reg_tmp);
@@ -550,7 +553,6 @@ private:
                     ptr[reg_tmp]);
             vpdpbusd_ones(vmm_acc_tr(), vmm_data_tr(), src_is_signed_);
         } else {
-            const Xbyak::Xmm acc_x(vmm_acc_tr().getIdx());
             xor_(reg_n, reg_n);
             Label scalar_loop;
             L(scalar_loop);
@@ -558,8 +560,7 @@ private:
                 movsx(reg_b.cvt32(), byte[reg_tmp + reg_n]);
             else
                 movzx(reg_b.cvt32(), byte[reg_tmp + reg_n]);
-            vmovd(Xbyak::Xmm(vmm_data_tr().getIdx()), reg_b.cvt32());
-            vpaddd(acc_x, acc_x, Xbyak::Xmm(vmm_data_tr().getIdx()));
+            add(reg_iter.cvt32(), reg_b.cvt32());
             inc(reg_n);
             cmp(reg_n, reg_k_iter);
             jl(scalar_loop, T_NEAR);
@@ -568,6 +569,7 @@ private:
 
         hreduce_dword(vmm_acc_tr());
         vmovd(reg_T.cvt32(), Xmm(vmm_acc_tr().getIdx()));
+        if (scalar_tail) add(reg_T.cvt32(), reg_iter.cvt32());
 
         // Broadcast int32 -> vmm_T_bc; convert to f32.
         if (isa_has_masks(isa_)) {
