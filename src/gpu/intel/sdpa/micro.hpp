@@ -334,6 +334,17 @@ struct micro_fwd_t : public primitive_t {
                             attr()->dropout_.use_host_scalars_),
                     "fused SDPA FWD with device dropout not supported "
                     "for xe_hpg");
+            // Xe-HPG: enabling dropout together with an attention mask on the
+            // systolic micro_sdpa fwd path triggers an IGC miscompile that
+            // yields partial-zero outputs. Neither dropout alone nor mask alone
+            // is affected. Reject this specific combination so the graph API
+            // falls back to the unfused decomposition (correct results).
+            VDISPATCH_SDPA(
+                    IMPLICATION(arch() == compute::gpu_arch_t::xe_hpg
+                                    && !attr()->dropout_.has_default_values(),
+                            !with_attn_mask()),
+                    "fused SDPA FWD with dropout and attention mask not "
+                    "supported for xe_hpg (IGC miscompile)");
 
             return status::success;
         }
